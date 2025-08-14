@@ -10,6 +10,7 @@ from hls4ml.backends.vivado_accelerator.vivado_accelerator_config import VivadoA
 from hls4ml.backends.catapult.catapult_backend import CatapultBackend  # isort: skip
 
 from hls4ml.backends.vitis.vitis_backend import VitisBackend  # isort: skip
+from hls4ml.backends.dynamatic.dynamatic_backend import DynamaticBackend  # isort: skip
 
 register_backend('Vivado', VivadoBackend)
 register_backend('VivadoAccelerator', VivadoAcceleratorBackend)
@@ -18,3 +19,4 @@ register_backend('Quartus', QuartusBackend)
 register_backend('Catapult', CatapultBackend)
 register_backend('SymbolicExpression', SymbolicExpressionBackend)
 register_backend('oneAPI', OneAPIBackend)
+register_backend('Dynamatic', DynamaticBackend)
