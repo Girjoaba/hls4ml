@@ -93,9 +93,9 @@ class DynamaticWriter(Writer):
                             newline += indent + f'default_t tmp{i};\n'
                             newline += indent + f'{layer.get_attr("func_call")}({prev_var}, out{i}, {layer.get_attr("in_dim_key")}, {layer.get_attr("out_dim_key")}, w{i}, b{i}, acc{i}, tmp{i});\n'
                             prev_var = f'out{i}'
-                        else:
-                            newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
-                            prev_var = f'out{i}'
+                        # else:
+                        #     newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
+                        #     prev_var = f'out{i}'
 
 
             elif '// hls-fpga-machine-learning input init' in line:
