@@ -33,10 +33,10 @@ class DynamaticAttrBuilder:
         fxp_weights (np.ndarray): already quantized weight matrix
         fxp_bias (np.ndarray):    already quantized bias vector
 
-        in_nb, in_en, in_bu (str): parameters used for fixed point computation in DSLX
+        in_width, in_en, in_frac (str): parameters used for fixed point computation in DSLX
                                    the parameters of the input vector 
                                    number of bits (width), is negative, binary unsigned exponent (frac bits)
-        out_nb, out_en, out_bu (str): parameters used for fixed point computation in DSLX
+        out_width, out_en, out_frac (str): parameters used for fixed point computation in DSLX
                                       the parameters of the output vector 
                                       number of bits (width), is negative, binary unsigned exponent (frac bits)
 
@@ -97,8 +97,8 @@ class DynamaticAttrBuilder:
         #TODO: check which element in the precision array should we take Currently we assume the precision of weights is the first elem.
         # has weights
         if len(weights) >= 1:
-            width = int(self.node.get_attr('in_nb').split(':', 1)[1])
-            frac = int(self.node.get_attr('in_bu').split(':', 1)[1])
+            width = self.node.get_attr('in_width')
+            frac = self.node.get_attr('in_frac')
 
             mat = np.array(list(list(weights)[0])).reshape(in_dim, out_dim)
             mat_T = mat.T   # in Keras the weights are transposed
@@ -111,72 +111,65 @@ class DynamaticAttrBuilder:
         #TODO: check which element in the precision array should we take Currently we assume the precision of weights is the first elem.
         # has bias
         if len(weights) >= 2:
-            width = int(self.node.get_attr('in_nb').split(':', 1)[1])
-            frac = int(self.node.get_attr('in_bu').split(':', 1)[1])
+            width = self.node.get_attr('in_width')
+            frac = self.node.get_attr('in_frac')
 
             fxp_b: NDArray[np.int_] = Fxp(list(list(weights)[1]), signed=True, n_word=width, n_frac=frac).raw()
             return fxp_b
         return np.array([])
     
     @attach_to_node()
-    def in_nb(self, prev_layer_precision: dict | None) -> str: # TODO: right now we only care about the first defined type in the list
+    def in_width(self, prev_layer_precision: dict | None) -> str: # TODO: right now we only care about the first defined type in the list
         if prev_layer_precision:
             for _, type_var in prev_layer_precision.items():
-                return f'u32:{type_var.precision.width}'
+                return int(type_var.precision.width)
         return ''
     
     @attach_to_node()
-    def in_en(self) -> Literal['u32:1']:
-        return 'u32:1'
-    
-    @attach_to_node()
-    def in_bu(self, prev_layer_precision: dict | None) -> str:
+    def in_frac(self, prev_layer_precision: dict | None) -> str:
         if prev_layer_precision:
             for _, type_var in prev_layer_precision.items():
-                return f'u32:{type_var.precision.width - type_var.precision.integer}'
+                return int(type_var.precision.width - type_var.precision.integer)
         return ''
     
     @attach_to_node()
-    def out_nb(self, layer_precision: dict) -> str:
+    def out_width(self, layer_precision: dict) -> str:
         if layer_precision.get('result_t', False):
             width = layer_precision['result_t'].precision.width
-            return f'u32:{width}'
+            return int(width)
         for _, type_var in layer_precision.items():
-            return f'u32:{type_var.precision.width}'
+            return int(type_var.precision.width)
         return ''
-    
-    @attach_to_node()
-    def out_en(self) -> Literal['u32:1']:
-        return 'u32:1'
 
     @attach_to_node()
-    def out_bu(self, layer_precision) -> str:
+    def out_frac(self, layer_precision) -> str:
         if layer_precision.get('result_t', False):
             width = layer_precision['result_t'].precision.width
             integer = layer_precision['result_t'].precision.integer
-            return f'u32:{width - integer}'
+            return int(width - integer)
         for _, type_var in layer_precision.items():
-            return f'u32:{type_var.precision.width - type_var.precision.integer}'
+            return int(type_var.precision.width - type_var.precision.integer)
         return ''
     
     @attach_to_node()
     def in_type(self) -> str:
-        return f'sN[{self.node.get_attr("in_nb")}]'
+        return f'default_t'
     
     @attach_to_node()
     def out_type(self) -> str:
-        return f'sN[{self.node.get_attr("out_nb")}]'
+        return f'default_t'
 
     @attach_to_node()
     def func_call(self) -> str:
         func_call_str = ''
         if self.node.class_name == 'Dense':
-            func_call_str = f'fc::dense<{self.node.get_attr("in_nb")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_bu")}, {self.node.get_attr("out_nb")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_bu")}>'
+            func_call_str = f'DENSE_RELU_LAYER'
         
         elif self.node.class_name == 'Activation':
-            func_call_str = f'activations::relu<{self.node.get_attr("out_nb")}>'
+            func_call_str = f''
 
         elif self.node.class_name == 'Softmax':
+            raise Exception('Softmax not implemented yet...')
             implementation = dict(self.node.attributes).get('implementation', 'stable')
             if implementation == 'stable':
                 table_size = dict(self.node.attributes)['table_size']
@@ -187,17 +180,17 @@ class DynamaticAttrBuilder:
 
                 func_call_str = (
                     f"lookup_tables::softmax_stable<"
-                    f"{self.node.get_attr('in_nb')}, {self.node.get_attr('in_en')}, {self.node.get_attr('in_bu')}, "
-                    f" {self.node.get_attr('out_nb')}, {self.node.get_attr('out_en')}, {self.node.get_attr('out_bu')}, "
+                    f"{self.node.get_attr('in_width')}, {self.node.get_attr('in_en')}, {self.node.get_attr('in_frac')}, "
+                    f" {self.node.get_attr('out_width')}, {self.node.get_attr('out_en')}, {self.node.get_attr('out_frac')}, "
                     f"u32:{exp_width}, u32:1, u32:{exp_frac}, "
                     f"u32:{inv_width}, u32:1, u32:{inv_frac}, "
                     f"u32:{table_size}>"
                 )
             elif implementation == 'latency':
                 table_size = dict(self.node.attributes)['table_size']
-                func_call_str = f'lookup_tables::softmax_latency<{self.node.get_attr("in_nb")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_bu")}, {self.node.get_attr("out_nb")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_bu")}, u32:{table_size}>'
+                func_call_str = f'lookup_tables::softmax_latency<{self.node.get_attr("in_width")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_frac")}, {self.node.get_attr("out_width")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_frac")}, u32:{table_size}>'
             elif implementation == 'argmax':
-                func_call_str = f'activations::argmax<{self.node.get_attr("in_nb")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_bu")}, {self.node.get_attr("out_nb")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_bu")}>'
+                func_call_str = f'activations::argmax<{self.node.get_attr("in_width")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_frac")}, {self.node.get_attr("out_width")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_frac")}>'
         return func_call_str
     
     
@@ -231,12 +224,10 @@ class BuildAttr(OptimizerPass):
                 .in_dim_val(prev_out_dim_val)
                 .out_dim_key(curr_out_dim_key)
                 .out_dim_val(curr_out_dim_val)
-                .in_nb(prev_layer_precision)
-                .in_en()
-                .in_bu(prev_layer_precision)
-                .out_nb(curr_prec)
-                .out_en()
-                .out_bu(curr_prec)
+                .in_width(prev_layer_precision)
+                .in_frac(prev_layer_precision)
+                .out_width(curr_prec)
+                .out_frac(curr_prec)
                 .in_type()
                 .out_type()
                 .fxp_weights(curr_weights, out_dim=curr_out_dim_val, in_dim=prev_out_dim_val)

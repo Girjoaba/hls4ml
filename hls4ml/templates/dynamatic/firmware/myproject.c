@@ -1,6 +1,7 @@
 // hls-fpga-machine-learning `TODO: make imports dynamic at writer level` imports
 #include "dynamatic/Integration.h"
 #include "stdlib.h"
+#include "nnet_utils/fc.h"
 
 // hls-fpga-machine-learning `TODO: make preicison dynamic at writer level` insert layer precision
 #define NB_DEFAULT 16
@@ -32,7 +33,7 @@ void myproject(
 
 int main(void) {
     srand(13);
-    
+
     // hls-fpga-machine-learning input init
 
     CALL_KERNEL(

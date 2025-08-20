@@ -45,7 +45,6 @@ class DynamaticWriter(Writer):
 
         layers = list(model.get_layers())
         indent = '    '
-        last_layer_dim_key = ''
         for line in f.readlines():
             # Add headers to weights and biases
             if 'myproject' in line:
@@ -84,19 +83,20 @@ class DynamaticWriter(Writer):
                         else:
                             newline += '\n'
 
-            # elif '// hls-fpga-machine-learning insert layers' in line:
-            #     newline = line
-            #     prev_var = 'x'
-            #     for i, layer in enumerate(layers):
-            #         if layer.get_attr('write_func'):
-            #             if layer.get_attr('write_weights'):
-            #                 newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var}, w{i}, b{i});\n'
-            #                 prev_var = f'z{i}'
-            #             else:
-            #                 newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
-            #                 prev_var = f'z{i}'
+            elif '// hls-fpga-machine-learning insert layers' in line:
+                newline = line
+                prev_var = 'input'
+                for i, layer in enumerate(layers):
+                    if layer.get_attr('write_func'):
+                        if layer.get_attr('write_weights'):
+                            newline += indent + f'dense_accum_t acc{i};\n'
+                            newline += indent + f'default_t tmp{i};\n'
+                            newline += indent + f'{layer.get_attr("func_call")}({prev_var}, out{i}, {layer.get_attr("in_dim_key")}, {layer.get_attr("out_dim_key")}, w{i}, b{i}, acc{i}, tmp{i});\n'
+                            prev_var = f'out{i}'
+                        else:
+                            newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
+                            prev_var = f'out{i}'
 
-            #     newline += indent + prev_var + '\n'
 
             elif '// hls-fpga-machine-learning input init' in line:
                 newline = line
