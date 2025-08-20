@@ -1,40 +1,29 @@
-import os
-import sys
-from warnings import warn
+# Typing imports
+from __future__ import annotations # makes all annotations into strings
+from typing import List, Any, TYPE_CHECKING
+from numpy.typing import NDArray
+if TYPE_CHECKING:
+    from hls4ml.model.graph import ModelGraph
+    from hls4ml.model.layers import Layer
+    from subprocess import CompletedProcess
 
+import os, sys
+import re
+import subprocess, shlex
 import numpy as np
+from warnings import warn
+from fxpmath import Fxp
 
 from hls4ml.backends import FPGABackend
-from hls4ml.backends.fpga.fpga_types import APTypeConverter, HLSTypeConverter
-from hls4ml.backends.vivado.vivado_types import VivadoArrayVariableConverter
-from hls4ml.model.attributes import ChoiceAttribute, ConfigurableAttribute, TypeAttribute
-from hls4ml.model.flow import register_flow
-from hls4ml.model.layers import (
-    GRU,
-    LSTM,
-    Conv1D,
-    Conv2D,
-    Dense,
-    DepthwiseConv1D,
-    DepthwiseConv2D,
-    Einsum,
-    EinsumDense,
-    Embedding,
-    GarNet,
-    GarNetStack,
-    Layer,
-    Pooling1D,
-    Pooling2D,
-    SeparableConv1D,
-    SeparableConv2D,
-    SimpleRNN,
-    TimeDistributed,
-)
 from hls4ml.model.optimizer import get_backend_passes, layer_optimizer
-from hls4ml.model.types import FixedPrecisionType, IntegerPrecisionType, NamedType, PackedType
-from hls4ml.report import parse_vivado_report
-from hls4ml.utils import attribute_descriptions as descriptions
-from hls4ml.utils.einsum_utils import parse_einsum
+from hls4ml.model.flow import register_flow
+from hls4ml.model.attributes import ChoiceAttribute, ConfigurableAttribute, TypeAttribute
+from hls4ml.model.layers import (
+    Dense,
+    Layer,
+    Activation,
+    Softmax
+)
 
 
 class DynamaticBackend(FPGABackend):
@@ -51,6 +40,11 @@ class DynamaticBackend(FPGABackend):
             'infer_precision_types',
         ]
         optimization_flow = register_flow('optimize', optimization_passes, requires=[init_flow], backend=self.name)
+
+        dynamatic_attributes = [
+            'dynamatic:build_attr',
+        ]
+        dynamatic_attributes_flow: str = register_flow('specific_attributes', dynamatic_attributes, requires=[optimization_flow], backend=self.name)
 
         templates = self._get_layer_templates()
         template_flow = register_flow('apply_templates', self._get_layer_templates, requires=[init_flow], backend=self.name)
@@ -79,6 +73,7 @@ class DynamaticBackend(FPGABackend):
             'optimize',
             init_flow,
             optimization_flow,
+            dynamatic_attributes_flow,
             template_flow,
         ]
 
@@ -135,6 +130,33 @@ class DynamaticBackend(FPGABackend):
         }
 
         return config
+
+
+    def compile(self, model: ModelGraph) -> None:
+        raise Exception('COMPILE not implemented yet...')
+        path = self._get_backend_exec_path(model)
+
+        curr_dir = os.getcwd()
+        os.chdir(f'{model.config.get_output_dir()}/firmware')
+        kernel_name = model.config.get_project_name()
+
+        ## Generate IR
+        with open(f'{kernel_name}.ir', 'w') as ir_file:
+            gen_cmd = [ 
+                f'{path}/xls/dslx/ir_convert/ir_converter_main',
+                f'--top={kernel_name}',
+                f'{kernel_name}.x'
+            ]
+            subprocess.run(gen_cmd, check=True, stdout=ir_file)
+        ## Optimize IR
+        with open(f'{kernel_name}.opt.ir', 'w') as opt_file:
+            opt_cmd = [ 
+                f'{path}/xls/tools/opt_main',
+                f'{kernel_name}.ir'
+            ]
+            subprocess.run(opt_cmd, check=True, stdout=opt_file)
+
+        os.chdir(curr_dir)
 
     def build(
         self,
