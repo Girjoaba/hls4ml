@@ -128,7 +128,7 @@ class DynamaticWriter(Writer):
                 for i, layer in enumerate(layers):
                     if layer.get_attr("write_weights"):
                         # Weights
-                        newline += f'const default_t w{i}[{layer.get_attr("in_dim_key")}*{layer.get_attr("out_dim_key")}] = {{\n'
+                        newline += f'const default_t w{i}[{layer.get_attr("in_dim_key")}][{layer.get_attr("out_dim_key")}] = {{\n'
                         for idx_row, row in enumerate(layer.get_attr('fxp_weights')):
                             newline += indent
                             for idx_col, w in enumerate(row):
