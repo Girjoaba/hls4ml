@@ -1,6 +1,7 @@
 // hls-fpga-machine-learning `TODO: make imports dynamic at writer level` imports
 #include "dynamatic/Integration.h"
 #include "stdlib.h"
+#include "stdio.h"
 #include "nnet_utils/fc.h"
 
 // hls-fpga-machine-learning `TODO: make preicison dynamic at writer level` insert layer precision

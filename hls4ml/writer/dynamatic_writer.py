@@ -23,13 +23,20 @@ class DynamaticWriter(Writer):
         if not os.path.isdir(f"{model.config.get_output_dir()}/firmware"):
             os.makedirs(f"{model.config.get_output_dir()}/firmware")
 
+        input_txt_path = os.path.join(model.config.get_output_dir(), "firmware", "input.txt")
+        with open(input_txt_path, "w") as f_input:
+            f_input.write("")
 
-    # def write_build_script(self, model: ModelGraph) -> None:
-    #     # build_prj.tcl
-    #     filedir = os.path.dirname(os.path.abspath(__file__))
-    #     srcpath = os.path.join(filedir, '../templates/dynamatic/build_prj.tcl')
-    #     dstpath = f'{model.config.get_output_dir()}/build_prj.tcl'
-    #     copyfile(srcpath, dstpath)
+
+    def write_scripts(self, model: ModelGraph) -> None:
+        filedir = os.path.dirname(os.path.abspath(__file__))
+        srcpath_compile = os.path.join(filedir, '../templates/dynamatic/llvm-cf-handshake.sh')
+        dstpath_compile = f'{model.config.get_output_dir()}/llvm-cf-handshake.sh'
+        copyfile(srcpath_compile, dstpath_compile)
+
+        srcpath_predict = os.path.join(filedir, '../templates/dynamatic/predict.sh')
+        dstpath_predict = f'{model.config.get_output_dir()}/predict.sh'
+        copyfile(srcpath_predict, dstpath_predict)
 
 
     def write_project_dynamatic(self, model: ModelGraph) -> None:
@@ -49,15 +56,6 @@ class DynamaticWriter(Writer):
             # Add headers to weights and biases
             if 'myproject' in line:
                 newline = line.replace('myproject', model.config.get_project_name())
-
-            # elif '// hls-fpga-machine-learning imports' in line:
-            #     newline = line
-            #     seen_libs = []
-            #     for layer in layers:
-            #         lib = layer.get_attr('func_call').split('::', 1)[0]
-            #         if lib and lib not in seen_libs:
-            #             seen_libs.append(lib)
-            #             newline += f'import nnet_utils.{lib};\n'
 
             elif '// hls-fpga-machine-learning insert dimensions' in line:
                 newline = line
@@ -103,9 +101,11 @@ class DynamaticWriter(Writer):
                 for i, layer in enumerate(layers):
                     if layer.class_name == 'Input':
                         newline += indent + f'default_t input[{layer.get_attr("out_dim_key")}];\n'
+                        newline += indent + f'FILE *f = fopen("input.txt", "r");\n'
                         newline += indent + f'for (int i=0; i < {layer.get_attr("out_dim_key")}; ++i) {{\n'
-                        newline += indent + indent + 'input[i] = rand() % 100;\n'
+                        newline += indent + indent + 'fscanf(f, "%d", &input[i]);\n'
                         newline += indent + '}\n\n'
+                        newline += indent + 'fclose(f);\n\n'
                     elif layer.get_attr('write_func'):
                         newline += indent + f'default_t out{i}[{layer.get_attr("out_dim_key")}];\n'
 
@@ -190,6 +190,6 @@ class DynamaticWriter(Writer):
     def write_hls(self, model: ModelGraph) -> None:
 
         self.write_project_dir(model)
-        # self.write_build_script(model)
+        self.write_scripts(model)
         self.write_project_dynamatic(model)
         self.write_nnet_utils(model)

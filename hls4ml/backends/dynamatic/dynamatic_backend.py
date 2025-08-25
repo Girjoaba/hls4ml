@@ -7,8 +7,7 @@ if TYPE_CHECKING:
     from hls4ml.model.layers import Layer
     from subprocess import CompletedProcess
 
-import os, sys
-import re
+import os, glob, re, json, sys
 import subprocess, shlex
 import numpy as np
 from warnings import warn
@@ -149,7 +148,8 @@ class DynamaticBackend(FPGABackend):
 
         ## Run Dynamatic
         gen_cmd = [ 
-            f'{path}/tools/frontend/llvm-cf-handshake.sh',
+            f'bash',
+            f'../llvm-cf-handshake.sh',
             f'{path}',
             f'{kernel_name}.c',
             f'{kernel_name}'
@@ -160,7 +160,41 @@ class DynamaticBackend(FPGABackend):
 
 
     def predict(self, model: ModelGraph, x: np.floating | NDArray[np.floating[Any]]) -> list[NDArray[np.floating]]:
-        raise Exception('PREDICT not implemented yet...')
+
+        def _format_output(output_width: int, kernel_name: str) -> list:
+            folder = f"./out-{kernel_name}/sim/HDL_OUT"
+            matches = sorted(glob.glob(os.path.join(folder, "output_out*.dat")), key=os.path.getmtime, reverse=True)
+            if not matches:
+                raise FileNotFoundError(f"No files matched {folder}/output_out*.dat")
+
+            filepath = matches[0]
+            ints = []
+            inside_tx = False
+            hex_pattern = re.compile(r"0x[0-9a-fA-F]+")
+
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("[[transaction]]"):
+                        inside_tx = True
+                        continue
+                    if line.startswith("[[/transaction]]"):
+                        inside_tx = False
+                        continue
+                    if inside_tx:
+                        for tok in hex_pattern.findall(line):
+                            ints.append(int(tok, 16))
+
+            # signed interpretation w/ 2's complement
+            sign_bit = 1 << (output_width - 1)
+            full_mask = 1 << output_width
+            sint_output = [(v - full_mask) if (v & sign_bit) else v for v in ints]
+
+            hex_pat = re.compile(r"0x([0-9A-Fa-f]+)")
+            output_type_pat = re.compile(r"bits\[(\d+)\]")
+
+            return [sint_output]
+
         def _interpret_input(model: ModelGraph, 
                              path: str, 
                              x_list: NDArray[np.floating], 
@@ -168,69 +202,46 @@ class DynamaticBackend(FPGABackend):
                              n_inputs: int, 
                              input_width: int, 
                              input_frac: int) -> CompletedProcess[str]:
-            newline = ''
+            kernel_name = model.config.get_project_name()
+            predict_cmd = [ 
+                f'bash',
+                f'../predict.sh',
+                f'{path}',
+                f'{kernel_name}.c',
+                f'{kernel_name}'
+            ]
+            results = []
+
             for i in range(n_samples):
                 if n_inputs == 1:
                     inp = [np.asarray(x_list[i])]
                 else:
                     inp = [np.asarray(xj) for xj in x_list[i]]
-                newline += '['
                 fxp_x: list[NDArray[np.int_]] = Fxp(inp, signed=True, n_word=input_width, n_frac=input_frac).raw() 
+                newline = ''
                 if n_inputs == 1:
-                    newline += f'bits[{input_width}]:{fxp_x[0][0]}'
+                    newline += f'{fxp_x[0][0]}'
                 else:
                     for i, inp in enumerate(fxp_x):
-                        newline += f'bits[{input_width}]:{inp}'
-                        if i < len(fxp_x) - 1:
-                            newline += ','
-                newline += ']\n'
+                        newline += f'{inp} '
+                # Overwrite input.txt (overwrite file)
+                with open('input.txt', 'w') as f:
+                    f.write(newline)
+                # run command
+                subprocess.run(predict_cmd, check=True)
+                output = _format_output(input_width, kernel_name)
+                results += output
 
-            # run command
-            interpret_cmd = [ 
-                f'{path}/xls/tools/eval_ir_main',
-                f'firmware/{model.config.get_project_name()}.opt.ir',
-                f'--input_file=-'
-            ]
-            result = subprocess.run(
-                interpret_cmd,
-                input=newline,        
-                text=True,             
-                check=True,
-                stdout=subprocess.PIPE,
-            )
-            return result
+            return results
 
-        def _format_output(result: CompletedProcess[str]) -> list:
-            hex_pat = re.compile(r"0x([0-9A-Fa-f]+)")
-            output_type_pat = re.compile(r"bits\[(\d+)\]")
-
-            # process output
-            rows = []
-            for line in result.stdout.splitlines():
-                raw_outputs = hex_pat.findall(line)
-                m = output_type_pat.search(line)
-                output_width = int(m.group(1))
-                if not raw_outputs:
-                    continue
-                int_outputs = [int(o, output_width) for o in raw_outputs]
-
-                # signed interpretation w/ 2's complement
-                sign_bit = 1 << (output_width - 1)
-                full_mask = 1 << output_width
-                sint_output = [(v - full_mask) if (v & sign_bit) else v for v in int_outputs]
-
-                rows.append([sint_output])
-
-            return rows
 
         def _go_to_original_type(rows: list, 
                                  n_samples: int, 
                                  n_outputs: int, 
                                  python_input_type: np.dtype[np.floating], 
                                  scale) -> list[NDArray[np.floating]]:
-            output = np.array(rows, dtype=np.int32)
-            output = output.astype(python_input_type) / scale
-            output = [np.asarray([output[i_sample][i_output] for i_sample in range(n_samples)]) for i_output in range(n_outputs)]
+            output = np.array(rows, dtype=np.int32).astype(python_input_type) / scale
+            # output = [np.asarray([output[i_sample][i_output] for i_sample in range(n_samples)]) for i_output in range(n_outputs)]
             return output
 
         def _correct_dims(results_floats: list[NDArray[np.floating]], n_samples: int, n_outputs: int) -> list[NDArray[np.floating]]:
@@ -270,20 +281,21 @@ class DynamaticBackend(FPGABackend):
 
         # Change dirs
         curr_dir = os.getcwd()
-        os.chdir(f'{model.config.get_output_dir()}')
+        os.chdir(f'{model.config.get_output_dir()}/firmware')
 
         # Result processing pipeling
         result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
         os.chdir(curr_dir)
-        result_formatted = _format_output(result)
-        result_floats: list[NDArray[np.floating]] = _go_to_original_type(result_formatted, 
+        print('BEFORE ', np.array(result).shape, n_outputs)
+        result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, 
             n_samples, 
             n_outputs, 
             python_input_type, 
             scale=2 ** output_frac
         )
-        result_corrected_dims: list[NDArray[np.floating]] = _correct_dims(result_floats, n_samples, n_outputs)
-        return result_corrected_dims
+        # result_corrected_dims: list[NDArray[np.floating]] = _correct_dims(result_floats, n_samples, n_outputs)
+        print('HREE ', np.array(result_floats).shape)
+        return result_floats
 
     def build(
         self,
