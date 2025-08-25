@@ -872,12 +872,12 @@ class ModelGraph(Serializable):
 
         return int(n_sample)
 
-    def predict(self, x):
+    def _predict(self, x):
         top_function, ctype = self._get_top_function(x)
         n_samples = self._compute_n_samples(x)
         n_inputs = len(self.get_input_variables())
         n_outputs = len(self.get_output_variables())
-
+        
         output = []
         if n_samples == 1 and n_inputs == 1:
             x = [x]
@@ -904,6 +904,14 @@ class ModelGraph(Serializable):
             return [output_i[0] for output_i in output]
         else:
             return output
+
+    def predict(self, x):
+        backend: Backend = self.config.backend
+        #TODO: add predict to Backend class
+        if hasattr(backend, 'predict') and callable(getattr(backend, 'predict')):
+            return backend.predict(self, x)
+        else:
+            return self._predict(x)
 
     def trace(self, x):
         print(f'Recompiling {self.config.get_project_name()} with tracing')

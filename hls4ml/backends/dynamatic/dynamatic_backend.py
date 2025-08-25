@@ -128,35 +128,162 @@ class DynamaticBackend(FPGABackend):
             'WriteTar': write_tar,
             'TBOutputStream': tb_output_stream,
         }
+        #TODO: update to a better way to access the project
+        config['dynamatic_path'] = '$HOME/dynamatic'
 
         return config
 
+    def _get_backend_exec_path(self, model: ModelGraph) -> str:
+        if 'linux' in sys.platform:
+            path: str = os.path.expandvars(model.config.get_config_value('dynamatic_path'))
+            if os.path.isdir(path) == 0:
+                raise Exception('Dynamatic is expected to be installed in your $HOME dir. We are looking for `$HOME/dynamatic`')
+        return path
 
     def compile(self, model: ModelGraph) -> None:
-        raise Exception('COMPILE not implemented yet...')
         path = self._get_backend_exec_path(model)
 
         curr_dir = os.getcwd()
         os.chdir(f'{model.config.get_output_dir()}/firmware')
         kernel_name = model.config.get_project_name()
 
-        ## Generate IR
-        with open(f'{kernel_name}.ir', 'w') as ir_file:
-            gen_cmd = [ 
-                f'{path}/xls/dslx/ir_convert/ir_converter_main',
-                f'--top={kernel_name}',
-                f'{kernel_name}.x'
-            ]
-            subprocess.run(gen_cmd, check=True, stdout=ir_file)
-        ## Optimize IR
-        with open(f'{kernel_name}.opt.ir', 'w') as opt_file:
-            opt_cmd = [ 
-                f'{path}/xls/tools/opt_main',
-                f'{kernel_name}.ir'
-            ]
-            subprocess.run(opt_cmd, check=True, stdout=opt_file)
+        ## Run Dynamatic
+        gen_cmd = [ 
+            f'{path}/tools/frontend/llvm-cf-handshake.sh',
+            f'{path}',
+            f'{kernel_name}.c',
+            f'{kernel_name}'
+        ]
+        subprocess.run(gen_cmd, check=True)
 
         os.chdir(curr_dir)
+
+
+    def predict(self, model: ModelGraph, x: np.floating | NDArray[np.floating[Any]]) -> list[NDArray[np.floating]]:
+        raise Exception('PREDICT not implemented yet...')
+        def _interpret_input(model: ModelGraph, 
+                             path: str, 
+                             x_list: NDArray[np.floating], 
+                             n_samples: int, 
+                             n_inputs: int, 
+                             input_width: int, 
+                             input_frac: int) -> CompletedProcess[str]:
+            newline = ''
+            for i in range(n_samples):
+                if n_inputs == 1:
+                    inp = [np.asarray(x_list[i])]
+                else:
+                    inp = [np.asarray(xj) for xj in x_list[i]]
+                newline += '['
+                fxp_x: list[NDArray[np.int_]] = Fxp(inp, signed=True, n_word=input_width, n_frac=input_frac).raw() 
+                if n_inputs == 1:
+                    newline += f'bits[{input_width}]:{fxp_x[0][0]}'
+                else:
+                    for i, inp in enumerate(fxp_x):
+                        newline += f'bits[{input_width}]:{inp}'
+                        if i < len(fxp_x) - 1:
+                            newline += ','
+                newline += ']\n'
+
+            # run command
+            interpret_cmd = [ 
+                f'{path}/xls/tools/eval_ir_main',
+                f'firmware/{model.config.get_project_name()}.opt.ir',
+                f'--input_file=-'
+            ]
+            result = subprocess.run(
+                interpret_cmd,
+                input=newline,        
+                text=True,             
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            return result
+
+        def _format_output(result: CompletedProcess[str]) -> list:
+            hex_pat = re.compile(r"0x([0-9A-Fa-f]+)")
+            output_type_pat = re.compile(r"bits\[(\d+)\]")
+
+            # process output
+            rows = []
+            for line in result.stdout.splitlines():
+                raw_outputs = hex_pat.findall(line)
+                m = output_type_pat.search(line)
+                output_width = int(m.group(1))
+                if not raw_outputs:
+                    continue
+                int_outputs = [int(o, output_width) for o in raw_outputs]
+
+                # signed interpretation w/ 2's complement
+                sign_bit = 1 << (output_width - 1)
+                full_mask = 1 << output_width
+                sint_output = [(v - full_mask) if (v & sign_bit) else v for v in int_outputs]
+
+                rows.append([sint_output])
+
+            return rows
+
+        def _go_to_original_type(rows: list, 
+                                 n_samples: int, 
+                                 n_outputs: int, 
+                                 python_input_type: np.dtype[np.floating], 
+                                 scale) -> list[NDArray[np.floating]]:
+            output = np.array(rows, dtype=np.int32)
+            output = output.astype(python_input_type) / scale
+            output = [np.asarray([output[i_sample][i_output] for i_sample in range(n_samples)]) for i_output in range(n_outputs)]
+            return output
+
+        def _correct_dims(results_floats: list[NDArray[np.floating]], n_samples: int, n_outputs: int) -> list[NDArray[np.floating]]:
+            if n_samples == 1 and n_outputs == 1:
+                return result_floats[0][0]
+            elif n_outputs == 1:
+                return result_floats[0]
+            elif n_samples == 1:
+                return [output_i[0] for output_i in result_floats]
+            else:
+                return result_floats
+
+        path: str = self._get_backend_exec_path(model)
+        layers: list[Layer] = list(model.get_layers())
+
+        # Extract dimensions
+        n_samples: int = model._compute_n_samples(x)
+        n_inputs: int = list(layers[0].get_output_variable().get_shape())[0][1] # Get input dimensions
+        n_outputs: int = len(model.get_output_variables())
+
+        # Extract type
+        input_width: int = list(layers[0].get_layer_precision().items())[0][1].precision.width
+        input_frac: int = input_width - list(layers[0].get_layer_precision().items())[0][1].precision.integer
+        output_width: int = list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.width
+        output_frac: int = output_width - list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.integer
+
+        # extract python type (float/double)
+        if isinstance(x, np.ndarray):
+            python_input_type: np.dtype[np.floating] = x[0].dtype
+        else:
+            python_input_type: np.dtype[np.floating]  = x.dtype
+        
+        if n_samples == 1 and n_inputs == 1 and isinstance(x, np.floating):
+            x_list: NDArray[np.floating] = np.array([x], dtype=x.dtype)
+        elif isinstance(x, np.ndarray): 
+            x_list: NDArray[np.floating] = x
+
+        # Change dirs
+        curr_dir = os.getcwd()
+        os.chdir(f'{model.config.get_output_dir()}')
+
+        # Result processing pipeling
+        result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
+        os.chdir(curr_dir)
+        result_formatted = _format_output(result)
+        result_floats: list[NDArray[np.floating]] = _go_to_original_type(result_formatted, 
+            n_samples, 
+            n_outputs, 
+            python_input_type, 
+            scale=2 ** output_frac
+        )
+        result_corrected_dims: list[NDArray[np.floating]] = _correct_dims(result_floats, n_samples, n_outputs)
+        return result_corrected_dims
 
     def build(
         self,
