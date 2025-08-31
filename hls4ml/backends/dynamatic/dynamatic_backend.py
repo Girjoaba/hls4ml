@@ -1,27 +1,23 @@
 # Typing imports
 from __future__ import annotations # makes all annotations into strings
-from typing import List, Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from numpy.typing import NDArray
 if TYPE_CHECKING:
     from hls4ml.model.graph import ModelGraph
     from hls4ml.model.layers import Layer
     from subprocess import CompletedProcess
 
-import os, glob, re, json, sys
-import subprocess, shlex
+import os, glob, re, sys
+import subprocess
 import numpy as np
 from warnings import warn
 from fxpmath import Fxp
 
 from hls4ml.backends import FPGABackend
-from hls4ml.model.optimizer import get_backend_passes, layer_optimizer
+from hls4ml.model.optimizer import get_backend_passes
 from hls4ml.model.flow import register_flow
-from hls4ml.model.attributes import ChoiceAttribute, ConfigurableAttribute, TypeAttribute
 from hls4ml.model.layers import (
-    Dense,
     Layer,
-    Activation,
-    Softmax
 )
 
 
@@ -50,9 +46,6 @@ class DynamaticBackend(FPGABackend):
         ]
         dynamatic_optimization_passes_flow: str = register_flow('merge_dense_relu_layers', dynamatic_optimization_passes, requires=[dynamatic_attributes_flow], backend=self.name)
 
-        templates = self._get_layer_templates()
-        template_flow = register_flow('apply_templates', self._get_layer_templates, requires=[init_flow], backend=self.name)
-
         writer_passes = ['dynamatic:write_hls']
         self._writer_flow = register_flow('write', writer_passes, requires=['dynamatic:ip'], backend=self.name)
 
@@ -65,7 +58,6 @@ class DynamaticBackend(FPGABackend):
             if opt_pass
             not in initializers
             + optimization_passes
-            + templates
             + writer_passes
         ]
 
@@ -79,7 +71,6 @@ class DynamaticBackend(FPGABackend):
             optimization_flow,
             dynamatic_attributes_flow,
             dynamatic_optimization_passes_flow,
-            template_flow,
         ]
 
         self._default_flow = register_flow('ip', None, requires=ip_flow_requirements, backend=self.name)
@@ -141,12 +132,12 @@ class DynamaticBackend(FPGABackend):
     def _get_backend_exec_path(self, model: ModelGraph) -> str:
         if 'linux' in sys.platform:
             path: str = os.path.expandvars(model.config.get_config_value('dynamatic_path'))
-            if os.path.isdir(path) == 0:
+            if not os.path.isdir(path):
                 raise Exception('Dynamatic is expected to be installed in your $HOME dir. We are looking for `$HOME/dynamatic`')
         return path
 
     def compile(self, model: ModelGraph) -> None:
-        """Compiles the Dynamatic project by writing the C-code, calling Dynamatic to generate HDL 
+        """Compiles the Dynamatic project by calling Dynamatic to generate HDL from the written C-code
         and creating an executable called for model prediction.
 
         Args:
@@ -266,15 +257,14 @@ class DynamaticBackend(FPGABackend):
         layers: list[Layer] = list(model.get_layers())
 
         # Extract dimensions
-        n_samples: int = model._compute_n_samples(x)
-        n_inputs: int = list(layers[0].get_output_variable().get_shape())[0][1] # Get input dimensions
-        n_outputs: int = len(model.get_output_variables())
+        n_samples : int = model._compute_n_samples(x)
+        n_inputs  : int = list(layers[0].get_output_variable().get_shape())[0][1] # Get input dimensions
 
         # Extract type
-        input_width: int = list(layers[0].get_layer_precision().items())[0][1].precision.width
-        input_frac: int = input_width - list(layers[0].get_layer_precision().items())[0][1].precision.integer
+        input_width : int = list(layers[0].get_layer_precision().items())[0][1].precision.width
+        input_frac  : int = input_width - list(layers[0].get_layer_precision().items())[0][1].precision.integer
         output_width: int = list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.width
-        output_frac: int = output_width - list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.integer
+        output_frac : int = output_width - list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.integer
 
         # extract python type (float/double)
         if isinstance(x, np.ndarray):
@@ -294,12 +284,7 @@ class DynamaticBackend(FPGABackend):
         # Result processing pipeling
         result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
         os.chdir(curr_dir)
-        result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, 
-            n_samples, 
-            n_outputs, 
-            python_input_type, 
-            scale=2 ** output_frac
-        )
+        result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, python_input_type, scale=2 ** output_frac)
         return result_floats
 
     def build(
