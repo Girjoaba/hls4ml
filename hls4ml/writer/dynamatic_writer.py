@@ -38,6 +38,14 @@ class DynamaticWriter(Writer):
         dstpath_predict = f'{model.config.get_output_dir()}/predict.sh'
         copyfile(srcpath_predict, dstpath_predict)
 
+        srcpath_synth = os.path.join(filedir, '../templates/dynamatic/synthesize.sh')
+        dstpath_synth = f'{model.config.get_output_dir()}/synthesize.sh'
+        copyfile(srcpath_synth, dstpath_synth)
+
+        srcpath_csim = os.path.join(filedir, '../templates/dynamatic/csim.sh')
+        dstpath_csim = f'{model.config.get_output_dir()}/csim.sh'
+        copyfile(srcpath_csim, dstpath_csim)
+
 
     def write_project_dynamatic(self, model: ModelGraph) -> None:
         """Write the main architecture source file (myproject.x)
@@ -61,10 +69,6 @@ class DynamaticWriter(Writer):
                 newline = line
                 for i, layer in enumerate(layers):
                     if layer.get_attr("write_dims"):
-                    #     if layer.class_name == 'Input':
-                    #         newline += f'#define INPUT_SIZE {layer.get_attr("out_dim_val")}\n'
-                    #     else:
-                    #         newline += f'#define {layer.get_attr("in_dim_key")} {layer.get_attr("in_dim_val")}\n'
                         newline += f'#define {layer.get_attr("out_dim_key")} {layer.get_attr("out_dim_val")}\n'
 
             elif '// hls-fpga-machine-learning architecture arguments' in line:
@@ -72,18 +76,34 @@ class DynamaticWriter(Writer):
                 func_layers_count = 0
                 for i, layer in enumerate(layers):
                     if layer.class_name == 'Input':
-                        newline += indent + f'default_t input[{layer.get_attr("out_dim_key")}], \n'
+                        for input_idx in range(layer.get_attr("out_dim_val")):
+                            newline += indent + f'default_t input_{input_idx}, \n'
                     elif layer.get_attr('write_func'):
-                        newline += indent + f'default_t out{i}[{layer.get_attr("out_dim_key")}]'
-                        if func_layers_count < len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
-                            newline += ',\n'
+                        if func_layers_count == len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
+                            for output_idx in range(layer.get_attr("out_dim_val")):
+                                newline += indent + f'default_t out{i}_{output_idx}[1]'
+                                if output_idx < layer.get_attr("out_dim_val") - 1:
+                                    newline += ','
+                                newline += '\n'
+                        func_layers_count += 1
+
+            elif '// hls-fpga-machine-learning intermediate stores' in line:
+                newline = line
+                func_layers_count = 0
+                for i, layer in enumerate(layers):
+                    if layer.class_name == 'Input':
+                        newline += indent + f'default_t tmp_input[{layer.get_attr("out_dim_key")}];\n'
+                        for input_idx in range(layer.get_attr("out_dim_val")):
+                            newline += indent + f'tmp_input[{input_idx}] = input_{input_idx};\n'
+                    elif layer.get_attr('write_func'):
+                        if func_layers_count < len([layer for layer in layers if layer.get_attr("write_func")]):
+                            newline += indent + f'default_t out{i}[{layer.get_attr("out_dim_key")}];\n'
                             func_layers_count += 1
-                        else:
-                            newline += '\n'
+
 
             elif '// hls-fpga-machine-learning insert layers' in line:
                 newline = line
-                prev_var = 'input'
+                prev_var = 'tmp_input'
                 for i, layer in enumerate(layers):
                     if layer.get_attr('write_func'):
                         if layer.get_attr('write_weights'):
@@ -91,44 +111,65 @@ class DynamaticWriter(Writer):
                             newline += indent + f'default_t tmp{i};\n'
                             newline += indent + f'{layer.get_attr("func_call")}({prev_var}, out{i}, {layer.get_attr("in_dim_key")}, {layer.get_attr("out_dim_key")}, w{i}, b{i}, acc{i}, tmp{i});\n'
                             prev_var = f'out{i}'
+                        else:
+                            newline += indent + f'default_t tmp{i};\n'
+                            newline += indent + f'{layer.get_attr("func_call")}({prev_var}, out{i}, {layer.get_attr("in_dim_key")}, tmp{i});\n'
+                            prev_var = f'out{i}'                            
                         # else:
                         #     newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
                         #     prev_var = f'out{i}'
 
+            elif '// hls-fpga-machine-learning write outputs' in line:
+                newline = line
+                func_layers_count = 0
+                for i, layer in enumerate(layers):
+                    if layer.get_attr('write_func'):
+                        if func_layers_count == len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
+                            for output_idx in range(layer.get_attr("out_dim_val")):
+                                newline += indent + f'out{i}_{output_idx}[0] = out{i}[{output_idx}];\n'
+                        func_layers_count += 1
 
             elif '// hls-fpga-machine-learning input init' in line:
                 newline = line
+                func_layers_count = 0
                 for i, layer in enumerate(layers):
                     if layer.class_name == 'Input':
                         newline += indent + f'default_t input[{layer.get_attr("out_dim_key")}];\n'
                         newline += indent + f'FILE *f = fopen("input.txt", "r");\n'
-                        newline += indent + f'for (int i=0; i < {layer.get_attr("out_dim_key")}; ++i) {{\n'
-                        newline += indent + indent + 'fscanf(f, "%d", &input[i]);\n'
-                        newline += indent + '}\n\n'
+                        for input_idx in range(layer.get_attr("out_dim_val")):
+                            newline += indent + f'default_t input_{input_idx};\n'
+                            newline += indent + f'fscanf(f, "%d", &input_{input_idx});\n'
                         newline += indent + 'fclose(f);\n\n'
-                    elif layer.get_attr('write_func'):
-                        newline += indent + f'default_t out{i}[{layer.get_attr("out_dim_key")}];\n'
+                    if layer.get_attr('write_func'):
+                        if func_layers_count == len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
+                            for output_idx in range(layer.get_attr("out_dim_val")):
+                                newline += indent + f'default_t out{i}_{output_idx}[1];\n'
+                        func_layers_count += 1
 
             elif '// hls-fpga-machine-learning input kernel' in line:
                 newline = ''
                 func_layers_count = 0
                 for i, layer in enumerate(layers):
                     if layer.class_name == 'Input':
-                        newline += indent + indent + f'input, \n'
+                        for input_idx in range(layer.get_attr("out_dim_val")):
+                            newline += indent + indent + f'input_{input_idx}, \n'
                     elif layer.get_attr('write_func'):
-                        newline += indent + indent + f'out{i}'
-                        if func_layers_count < len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
-                            newline += ',\n'
-                            func_layers_count += 1
+                        if func_layers_count == len([layer for layer in layers if layer.get_attr("write_func")]) - 1:
+                            for output_idx in range(layer.get_attr("out_dim_val")):
+                                newline += indent + indent + f'out{i}_{output_idx}'
+                                if output_idx < layer.get_attr("out_dim_val") - 1:
+                                    newline += ',\n'
+                                else:
+                                    newline += '\n'
                         else:
-                            newline += '\n'
+                            func_layers_count += 1
 
             elif '// hls-fpga-machine-learning load weights' in line:
                 newline = line
                 for i, layer in enumerate(layers):
                     if layer.get_attr("write_weights"):
                         # Weights
-                        newline += f'const default_t w{i}[{layer.get_attr("in_dim_key")}][{layer.get_attr("out_dim_key")}] = {{\n'
+                        newline += f'const default_t w{i}[{layer.get_attr("out_dim_key")}][{layer.get_attr("in_dim_key")}] = {{\n'
                         for idx_row, row in enumerate(layer.get_attr('fxp_weights')):
                             newline += indent
                             for idx_col, w in enumerate(row):

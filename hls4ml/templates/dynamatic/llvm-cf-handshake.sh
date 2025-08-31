@@ -191,9 +191,13 @@ $DYNAMATIC_BINS/dynamatic-opt \
 
 $DYNAMATIC_BINS/dynamatic-opt \
   $OUT/handshake.mlir \
-  --handshake-analyze-lsq-usage --handshake-replace-memory-interfaces \
-  --handshake-minimize-cst-width --handshake-optimize-bitwidths \
-  --handshake-materialize --handshake-infer-basic-blocks \
+  --handshake-analyze-lsq-usage \
+  --handshake-replace-memory-interfaces \
+  --handshake-minimize-cst-width \
+  --handshake-tree-height-reduction \
+  --handshake-optimize-bitwidths \
+  --handshake-materialize \
+  --handshake-infer-basic-blocks \
   > $OUT/handshake_transformed.mlir
 
 # ------------------------------------------------------------------------------
@@ -227,7 +231,7 @@ $DYNAMATIC_BINS/dynamatic-opt \
   $OUT/handshake_transformed.mlir \
   --handshake-mark-fpu-impl="impl=flopoco" \
   --handshake-set-buffering-properties="version=fpga20" \
-  --handshake-place-buffers="algorithm=fpga20 frequencies=$OUT/frequencies.csv timing-models=$DYNAMATIC_PATH/data/components.json target-period=8 timeout=30" \
+  --handshake-place-buffers="algorithm=fpl22 frequencies=$OUT/frequencies.csv timing-models=$DYNAMATIC_PATH/data/components.json target-period=5 timeout=600" \
   > $OUT/handshake_buffered.mlir
 
 $DYNAMATIC_BINS/dynamatic-opt \
@@ -251,3 +255,28 @@ $DYNAMATIC_BINS/dynamatic-opt \
 #   "$FUNC_NAME" \
 #   "$OUT" \
 #   "$OUT/sim"
+
+
+SIM_DIR="$OUT/sim"
+
+rm -rf "$SIM_DIR/"
+mkdir -p "$SIM_DIR/"{C_SRC,C_OUT,INPUT_VECTORS}
+mkdir -p "$SIM_DIR/C_SRC/dynamatic/"
+
+cp "$DYNAMATIC_PATH/include/dynamatic/Integration.h" \
+  "$SIM_DIR/C_SRC/dynamatic/"
+
+cp "$F_SRC" "$SIM_DIR/C_SRC"
+
+
+# Compile the source with verification flags
+"$DYNAMATIC_PATH/polygeist/llvm-project/build/bin/clang++" \
+  "$F_SRC" \
+  -D HLS_VERIFICATION \
+  -DHLS_VERIFICATION_PATH="$SIM_DIR" \
+  -I "$DYNAMATIC_PATH/include" \
+  -Wno-deprecated \
+  -o "$SIM_DIR/output_gen"
+
+# # Run the C simulation binary
+# "$SIM_DIR/output_gen"

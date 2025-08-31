@@ -28,8 +28,11 @@ typedef int default_t;
 void myproject(
     // hls-fpga-machine-learning architecture arguments
     ) {
+    // hls-fpga-machine-learning intermediate stores
 
     // hls-fpga-machine-learning insert layers
+
+    // hls-fpga-machine-learning write outputs
 }
 
 int main(void) {

@@ -163,34 +163,20 @@ class DynamaticAttrBuilder:
     def func_call(self) -> str:
         func_call_str = ''
         if self.node.class_name == 'Dense':
-            func_call_str = f'DENSE_RELU_LAYER'
+            func_call_str = f'DENSE_LAYER'
         
         elif self.node.class_name == 'Activation':
             func_call_str = f''
 
         elif self.node.class_name == 'Softmax':
-            raise Exception('Softmax not implemented yet...')
             implementation = dict(self.node.attributes).get('implementation', 'stable')
             if implementation == 'stable':
-                table_size = dict(self.node.attributes)['table_size']
-                exp_width = self.node.get_layer_precision()['softmax_exp_table_t'].precision.width
-                exp_frac = exp_width - self.node.get_layer_precision()['softmax_exp_table_t'].precision.integer
-                inv_width = self.node.get_layer_precision()['softmax_inv_table_t'].precision.width
-                inv_frac = inv_width - self.node.get_layer_precision()['softmax_inv_table_t'].precision.integer
-
-                func_call_str = (
-                    f"lookup_tables::softmax_stable<"
-                    f"{self.node.get_attr('in_width')}, {self.node.get_attr('in_en')}, {self.node.get_attr('in_frac')}, "
-                    f" {self.node.get_attr('out_width')}, {self.node.get_attr('out_en')}, {self.node.get_attr('out_frac')}, "
-                    f"u32:{exp_width}, u32:1, u32:{exp_frac}, "
-                    f"u32:{inv_width}, u32:1, u32:{inv_frac}, "
-                    f"u32:{table_size}>"
-                )
+                func_call_str = f'ARGMAX'
             elif implementation == 'latency':
                 table_size = dict(self.node.attributes)['table_size']
-                func_call_str = f'lookup_tables::softmax_latency<{self.node.get_attr("in_width")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_frac")}, {self.node.get_attr("out_width")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_frac")}, u32:{table_size}>'
+                func_call_str = f'ARGMAX'
             elif implementation == 'argmax':
-                func_call_str = f'activations::argmax<{self.node.get_attr("in_width")}, {self.node.get_attr("in_en")}, {self.node.get_attr("in_frac")}, {self.node.get_attr("out_width")}, {self.node.get_attr("out_en")}, {self.node.get_attr("out_frac")}>'
+                func_call_str = f'ARGMAX'
         return func_call_str
     
     

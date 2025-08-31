@@ -45,6 +45,11 @@ class DynamaticBackend(FPGABackend):
         ]
         dynamatic_attributes_flow: str = register_flow('specific_attributes', dynamatic_attributes, requires=[optimization_flow], backend=self.name)
 
+        dynamatic_optimization_passes = [
+            'dynamatic:merge_dense_relu',
+        ]
+        dynamatic_optimization_passes_flow: str = register_flow('merge_dense_relu_layers', dynamatic_optimization_passes, requires=[dynamatic_attributes_flow], backend=self.name)
+
         templates = self._get_layer_templates()
         template_flow = register_flow('apply_templates', self._get_layer_templates, requires=[init_flow], backend=self.name)
 
@@ -73,6 +78,7 @@ class DynamaticBackend(FPGABackend):
             init_flow,
             optimization_flow,
             dynamatic_attributes_flow,
+            dynamatic_optimization_passes_flow,
             template_flow,
         ]
 
@@ -162,36 +168,36 @@ class DynamaticBackend(FPGABackend):
     def predict(self, model: ModelGraph, x: np.floating | NDArray[np.floating[Any]]) -> list[NDArray[np.floating]]:
 
         def _format_output(output_width: int, kernel_name: str) -> list:
-            folder = f"./out-{kernel_name}/sim/HDL_OUT"
-            matches = sorted(glob.glob(os.path.join(folder, "output_out*.dat")), key=os.path.getmtime, reverse=True)
+            folder = f"./out-{kernel_name}/sim/C_OUT"
+            matches = sorted(
+                glob.glob(os.path.join(folder, "output_out*_*.dat")),
+                key=lambda f: int(re.search(r"_(\d+)\.dat$", os.path.basename(f)).group(1))
+            )
             if not matches:
                 raise FileNotFoundError(f"No files matched {folder}/output_out*.dat")
 
-            filepath = matches[0]
             ints = []
-            inside_tx = False
-            hex_pattern = re.compile(r"0x[0-9a-fA-F]+")
+            for filepath in matches:
+                inside_tx = False
+                hex_pattern = re.compile(r"0x[0-9a-fA-F]+")
 
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("[[transaction]]"):
-                        inside_tx = True
-                        continue
-                    if line.startswith("[[/transaction]]"):
-                        inside_tx = False
-                        continue
-                    if inside_tx:
-                        for tok in hex_pattern.findall(line):
-                            ints.append(int(tok, 16))
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("[[transaction]]"):
+                            inside_tx = True
+                            continue
+                        if line.startswith("[[/transaction]]"):
+                            inside_tx = False
+                            continue
+                        if inside_tx:
+                            for tok in hex_pattern.findall(line):
+                                ints.append(int(tok, 16))
 
             # signed interpretation w/ 2's complement
             sign_bit = 1 << (output_width - 1)
             full_mask = 1 << output_width
             sint_output = [(v - full_mask) if (v & sign_bit) else v for v in ints]
-
-            hex_pat = re.compile(r"0x([0-9A-Fa-f]+)")
-            output_type_pat = re.compile(r"bits\[(\d+)\]")
 
             return [sint_output]
 
@@ -241,18 +247,7 @@ class DynamaticBackend(FPGABackend):
                                  python_input_type: np.dtype[np.floating], 
                                  scale) -> list[NDArray[np.floating]]:
             output = np.array(rows, dtype=np.int32).astype(python_input_type) / scale
-            # output = [np.asarray([output[i_sample][i_output] for i_sample in range(n_samples)]) for i_output in range(n_outputs)]
             return output
-
-        def _correct_dims(results_floats: list[NDArray[np.floating]], n_samples: int, n_outputs: int) -> list[NDArray[np.floating]]:
-            if n_samples == 1 and n_outputs == 1:
-                return result_floats[0][0]
-            elif n_outputs == 1:
-                return result_floats[0]
-            elif n_samples == 1:
-                return [output_i[0] for output_i in result_floats]
-            else:
-                return result_floats
 
         path: str = self._get_backend_exec_path(model)
         layers: list[Layer] = list(model.get_layers())
@@ -267,6 +262,7 @@ class DynamaticBackend(FPGABackend):
         input_frac: int = input_width - list(layers[0].get_layer_precision().items())[0][1].precision.integer
         output_width: int = list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.width
         output_frac: int = output_width - list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.integer
+        print("WIDTH:", output_width, output_frac)
 
         # extract python type (float/double)
         if isinstance(x, np.ndarray):
@@ -285,51 +281,43 @@ class DynamaticBackend(FPGABackend):
 
         # Result processing pipeling
         result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
+        print("After interpret: ", np.array(result).shape)
         os.chdir(curr_dir)
-        print('BEFORE ', np.array(result).shape, n_outputs)
         result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, 
             n_samples, 
             n_outputs, 
             python_input_type, 
             scale=2 ** output_frac
         )
-        # result_corrected_dims: list[NDArray[np.floating]] = _correct_dims(result_floats, n_samples, n_outputs)
-        print('HREE ', np.array(result_floats).shape)
+        print("After float: ", np.array(result_floats).shape)
         return result_floats
 
     def build(
         self,
         model,
-        reset=False,
-        csim=True,
-        synth=True,
-        cosim=False,
-        validation=False,
-        export=False,
-        vsynth=False,
-        fifo_opt=False,
+        full_clock: float = 5,
+        half_clock: float = 2.5,
     ):
-        raise Exception('BUILD not implemented yet...')
-        if 'linux' in sys.platform:
-            found = os.system('command -v vivado_hls > /dev/null')
-            if found != 0:
-                raise Exception('Vivado HLS installation not found. Make sure "vivado_hls" is on PATH.')
+        path = self._get_backend_exec_path(model)
 
         curr_dir = os.getcwd()
-        os.chdir(model.config.get_output_dir())
-        vivado_cmd = (
-            f'vivado_hls -f build_prj.tcl "reset={reset} '
-            f'csim={csim} '
-            f'synth={synth} '
-            f'cosim={cosim} '
-            f'validation={validation} '
-            f'export={export} '
-            f'vsynth={vsynth} '
-            f'fifo_opt={fifo_opt}"'
-        )
-        os.system(vivado_cmd)
+        os.chdir(f'{model.config.get_output_dir()}/firmware')
+        kernel_name = model.config.get_project_name()
+
+        ## Run Dynamatic
+        gen_cmd = [ 
+            f'bash',
+            f'../synthesize.sh',
+            f'{path}',
+            f"./out-{kernel_name}",
+            f'{kernel_name}',
+            f'{full_clock}',
+            f'{half_clock}'
+        ]
+        subprocess.run(gen_cmd, check=True)
+
         os.chdir(curr_dir)
 
-        return parse_vivado_report(model.config.get_output_dir())
+        # return parse_vivado_report(model.config.get_output_dir())
 
    
