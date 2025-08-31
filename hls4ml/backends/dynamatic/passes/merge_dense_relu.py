@@ -11,6 +11,10 @@ from hls4ml.model.optimizer import OptimizerPass
 class MergeDenseRelu(OptimizerPass):
     """Merges a dense layer followed by a relu layer in one layer by
     applying the relu function immediately after each dot product. 
+
+    This optimization is useful because it removes a RAW dependecy in between the Dense and ReLU layers.
+    If we appy ReLU right after the dot product in the
+    Matrix-Vector Multiplication, we do not require an additional store.
     """
 
     def match(self, node: Layer) -> bool:
