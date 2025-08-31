@@ -174,7 +174,10 @@ class DynamaticBackend(FPGABackend):
 
         TODO: make the prediction executable a linked .so file
         """
-        def _format_output(output_width: int, kernel_name: str) -> list:
+        def _read_output(output_width: int, kernel_name: str) -> list:
+            """Read the output and convert it to an integer."""
+
+            # find output files
             folder = f"./out-{kernel_name}/sim/C_OUT"
             matches = sorted(
                 glob.glob(os.path.join(folder, "output_out*_*.dat")),
@@ -183,6 +186,7 @@ class DynamaticBackend(FPGABackend):
             if not matches:
                 raise FileNotFoundError(f"No files matched {folder}/output_out*.dat")
 
+            # read outputs files
             ints = []
             for filepath in matches:
                 inside_tx = False
@@ -201,20 +205,20 @@ class DynamaticBackend(FPGABackend):
                             for tok in hex_pattern.findall(line):
                                 ints.append(int(tok, 16))
 
-            # signed interpretation w/ 2's complement to obtain the de-quantized output value
+            # signed interpretation w/ 2's complement to obtain the de-quantized integer value
             sign_bit = 1 << (output_width - 1)
             full_mask = 1 << output_width
             sint_output = [(v - full_mask) if (v & sign_bit) else v for v in ints]
 
             return [sint_output]
 
-        def _interpret_input(model: ModelGraph, 
+        def _predict_using_c_model(model: ModelGraph, 
                              path: str, 
                              x_list: NDArray[np.floating], 
                              n_samples: int, 
                              n_inputs: int, 
                              input_width: int, 
-                             input_frac: int) -> CompletedProcess[str]:
+                             input_frac: int) -> list:
             kernel_name = model.config.get_project_name()
             predict_cmd = [ 
                 f'bash',
@@ -226,6 +230,7 @@ class DynamaticBackend(FPGABackend):
             results = []
 
             for i in range(n_samples):
+                # format the input to be fed into the C model as a text file
                 if n_inputs == 1:
                     inp = [np.asarray(x_list[i])]
                 else:
@@ -241,7 +246,7 @@ class DynamaticBackend(FPGABackend):
                     f.write(newline)
                 # run command
                 subprocess.run(predict_cmd, check=True)
-                output = _format_output(input_width, kernel_name)
+                output = _read_output(input_width, kernel_name)
                 results += output
 
             return results
@@ -282,7 +287,7 @@ class DynamaticBackend(FPGABackend):
         os.chdir(f'{model.config.get_output_dir()}/firmware')
 
         # Result processing pipeling
-        result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
+        result = _predict_using_c_model(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
         os.chdir(curr_dir)
         result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, python_input_type, scale=2 ** output_frac)
         return result_floats
