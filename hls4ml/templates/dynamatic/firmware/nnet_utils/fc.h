@@ -1,41 +1,41 @@
 
 
-#define DENSE_RELU_LAYER(input, output, input_sz, output_sz, w, b, acc, tmp)    \
+#define DENSE_RELU_LAYER(INPUT, OUTPUT, INPUT_SZ, OUTPUT_SZ, W, B, ACC, TMP)    \
 _Pragma("clang loop unroll(full)")                                              \
-    for (int j = 0; j < output_sz; j++) {                                       \
-        acc = 0;                                                                \
-        acc = (dense_accum_t)(b[j] << (FRAC_DEFAULT));                          \
+    for (int j = 0; j < OUTPUT_SZ; j++) {                                       \
+        ACC = 0;                                                                \
+        ACC = (dense_accum_t)(B[j] << (FRAC_DEFAULT));                          \
 _Pragma("clang loop unroll(full)")                                              \
-        for (int i = 0; i < input_sz; i++) {                                    \
-            acc += input[i] * w[j][i];                                          \
+        for (int i = 0; i < INPUT_SZ; i++) {                                    \
+            ACC += INPUT[i] * W[j][i];                                          \
         }                                                                       \
         /* TRUNCATE */                                                          \
-        acc = acc >> (FRAC_DEFAULT);                                            \
-        tmp = (default_t)acc;                                                   \
+        ACC = ACC >> (FRAC_DEFAULT);                                            \
+        TMP = (default_t)ACC;                                                   \
         /* RELU ACTIVATION */                                                   \
-        output[j] = tmp > 0 ? tmp : 0;                                          \
+        OUTPUT[j] = TMP > 0 ? TMP : 0;                                          \
     }
 
-#define DENSE_LAYER(input, output, input_sz, output_sz, w, b, acc, tmp)    \
+#define DENSE_LAYER(INPUT, OUTPUT, INPUT_SZ, OUTPUT_SZ, W, B, ACC, TMP)    \
 _Pragma("clang loop unroll(full)")                                              \
-    for (int j = 0; j < output_sz; j++) {                                       \
-        acc = 0;                                                                \
-        acc = (dense_accum_t)(b[j] << (FRAC_DEFAULT));                          \
+    for (int j = 0; j < OUTPUT_SZ; j++) {                                       \
+        ACC = 0;                                                                \
+        ACC = (dense_accum_t)(B[j] << (FRAC_DEFAULT));                          \
 _Pragma("clang loop unroll(full)")                                              \
-        for (int i = 0; i < input_sz; i++) {                                    \
-            acc += input[i] * w[j][i];                                          \
+        for (int i = 0; i < INPUT_SZ; i++) {                                    \
+            ACC += INPUT[i] * W[j][i];                                          \
         }                                                                       \
         /* TRUNCATE */                                                          \
-        acc = acc >> (FRAC_DEFAULT);                                            \
-        output[j] = (default_t)acc;                                             \
+        ACC = ACC >> (FRAC_DEFAULT);                                            \
+        OUTPUT[j] = (default_t)ACC;                                             \
     }
 
-#define ARGMAX(input, output, input_sz, tmp_argmax)                             \
-    tmp_argmax = -(1 << (NB_DEFAULT-1));                                        \
-    for (int i = 0; i < input_sz; i++) {                                        \
-        tmp_argmax = (tmp_argmax < input[i]) ? input[i] : tmp_argmax;           \
+#define ARGMAX(INPUT, OUTPUT, INPUT_SZ, TMP_ARGMAX)                             \
+    TMP_ARGMAX = -(1 << (NB_DEFAULT-1));                                        \
+    for (int i = 0; i < INPUT_SZ; i++) {                                        \
+        TMP_ARGMAX = (TMP_ARGMAX < INPUT[i]) ? INPUT[i] : TMP_ARGMAX;           \
     }                                                                           \
 _Pragma("clang loop unroll(full)")                                              \
-    for (int i = 0; i < input_sz; i++) {                                        \
-        output[i] = (tmp_argmax == input[i]) ? (1 << (FRAC_DEFAULT)) : 0;       \
+    for (int i = 0; i < INPUT_SZ; i++) {                                        \
+        OUTPUT[i] = (TMP_ARGMAX == INPUT[i]) ? (1 << (FRAC_DEFAULT)) : 0;       \
     }
