@@ -146,6 +146,12 @@ class DynamaticBackend(FPGABackend):
         return path
 
     def compile(self, model: ModelGraph) -> None:
+        """Compiles the Dynamatic project by writing the C-code, calling Dynamatic to generate HDL 
+        and creating an executable called for model prediction.
+
+        Args:
+            model (ModelGraph): hls4ml IR containining the neural network information.
+        """
         path = self._get_backend_exec_path(model)
 
         curr_dir = os.getcwd()
@@ -166,7 +172,17 @@ class DynamaticBackend(FPGABackend):
 
 
     def predict(self, model: ModelGraph, x: np.floating | NDArray[np.floating[Any]]) -> list[NDArray[np.floating]]:
+        """Takes multiple samples and runs them through the simulated network. 
+        All the predictions are added to a vector and returned.
 
+        Args:
+            model (ModelGraph): hls4ml IR containining the neural network information.
+            x (numpy array): input vectors
+        Returns:
+            numpy array: network predictions.
+
+        TODO: make the prediction executable a linked .so file
+        """
         def _format_output(output_width: int, kernel_name: str) -> list:
             folder = f"./out-{kernel_name}/sim/C_OUT"
             matches = sorted(
@@ -194,7 +210,7 @@ class DynamaticBackend(FPGABackend):
                             for tok in hex_pattern.findall(line):
                                 ints.append(int(tok, 16))
 
-            # signed interpretation w/ 2's complement
+            # signed interpretation w/ 2's complement to obtain the de-quantized output value
             sign_bit = 1 << (output_width - 1)
             full_mask = 1 << output_width
             sint_output = [(v - full_mask) if (v & sign_bit) else v for v in ints]
@@ -230,7 +246,6 @@ class DynamaticBackend(FPGABackend):
                 else:
                     for i, inp in enumerate(fxp_x):
                         newline += f'{inp} '
-                # Overwrite input.txt (overwrite file)
                 with open('input.txt', 'w') as f:
                     f.write(newline)
                 # run command
@@ -242,8 +257,6 @@ class DynamaticBackend(FPGABackend):
 
 
         def _go_to_original_type(rows: list, 
-                                 n_samples: int, 
-                                 n_outputs: int, 
                                  python_input_type: np.dtype[np.floating], 
                                  scale) -> list[NDArray[np.floating]]:
             output = np.array(rows, dtype=np.int32).astype(python_input_type) / scale
@@ -262,7 +275,6 @@ class DynamaticBackend(FPGABackend):
         input_frac: int = input_width - list(layers[0].get_layer_precision().items())[0][1].precision.integer
         output_width: int = list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.width
         output_frac: int = output_width - list(layers[len(layers)-1].get_layer_precision().items())[0][1].precision.integer
-        print("WIDTH:", output_width, output_frac)
 
         # extract python type (float/double)
         if isinstance(x, np.ndarray):
@@ -281,7 +293,6 @@ class DynamaticBackend(FPGABackend):
 
         # Result processing pipeling
         result = _interpret_input(model, path, x_list, n_samples, n_inputs, input_width, input_frac)
-        print("After interpret: ", np.array(result).shape)
         os.chdir(curr_dir)
         result_floats: list[NDArray[np.floating]] = _go_to_original_type(result, 
             n_samples, 
@@ -289,15 +300,19 @@ class DynamaticBackend(FPGABackend):
             python_input_type, 
             scale=2 ** output_frac
         )
-        print("After float: ", np.array(result_floats).shape)
         return result_floats
 
     def build(
         self,
-        model,
-        full_clock: float = 5,
-        half_clock: float = 2.5,
+        model: ModelGraph,
+        full_clock: float = 5
     ):
+        """Generates the synthesized design with timing and resource reports.
+
+        Args:
+            model (ModelGraph): hls4ml IR containining the neural network information.
+            full_clock (float): clock period in nanoseconds (ns)
+        """
         path = self._get_backend_exec_path(model)
 
         curr_dir = os.getcwd()
@@ -312,12 +327,13 @@ class DynamaticBackend(FPGABackend):
             f"./out-{kernel_name}",
             f'{kernel_name}',
             f'{full_clock}',
-            f'{half_clock}'
+            f'{full_clock/2}'
         ]
         subprocess.run(gen_cmd, check=True)
 
         os.chdir(curr_dir)
 
+        # TODO: implement parse_report
         # return parse_vivado_report(model.config.get_output_dir())
 
    

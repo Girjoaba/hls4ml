@@ -18,7 +18,7 @@ class DynamaticWriter(Writer):
         """Write the base project directory
 
         Args:
-            model (ModelGraph): the hls4ml model.
+            model (ModelGraph): hls4ml IR containining the neural network information.
         """
         if not os.path.isdir(f"{model.config.get_output_dir()}/firmware"):
             os.makedirs(f"{model.config.get_output_dir()}/firmware")
@@ -48,10 +48,10 @@ class DynamaticWriter(Writer):
 
 
     def write_project_dynamatic(self, model: ModelGraph) -> None:
-        """Write the main architecture source file (myproject.x)
+        """Write the main architecture source file (myproject.c)
 
         Args:
-            model (ModelGraph): the hls4ml model.
+            model (ModelGraph): hls4ml IR containining the neural network information.
         """
         filedir = os.path.dirname(os.path.abspath(__file__))
 
@@ -115,9 +115,6 @@ class DynamaticWriter(Writer):
                             newline += indent + f'default_t tmp{i};\n'
                             newline += indent + f'{layer.get_attr("func_call")}({prev_var}, out{i}, {layer.get_attr("in_dim_key")}, tmp{i});\n'
                             prev_var = f'out{i}'                            
-                        # else:
-                        #     newline += indent + f'let z{i} = {layer.get_attr("func_call")}({prev_var});\n'
-                        #     prev_var = f'out{i}'
 
             elif '// hls-fpga-machine-learning write outputs' in line:
                 newline = line
@@ -190,7 +187,7 @@ class DynamaticWriter(Writer):
                                 newline += ','
                         newline += '\n' + '};\n'
 
-            # Just copy line
+            # Just copy the line
             else:
                 newline = line
 
@@ -229,7 +226,12 @@ class DynamaticWriter(Writer):
         copytree(srcpath, dstpath)
 
     def write_hls(self, model: ModelGraph) -> None:
+        """Main writer function that calls multiple helper functions for writing the infrastrcture
+        of the Dynamatic project. 
 
+        Args:
+            model (ModelGraph): hls4ml IR containining the neural network information.
+        """
         self.write_project_dir(model)
         self.write_scripts(model)
         self.write_project_dynamatic(model)

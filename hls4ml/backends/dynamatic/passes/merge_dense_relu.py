@@ -13,14 +13,28 @@ class MergeDenseRelu(OptimizerPass):
     applying the relu function immediately after each dot product. 
     """
 
-    def match(self, node) -> bool:
-        """We first match a dense layer and in the transform step we merge any following ReLU layers."""
+    def match(self, node: Layer) -> bool:
+        """Match any dense layers.
+        
+        Args:
+            node (Layer): each layer of the neural networked will be called.
+        Returns:
+            bool: True if it matches a dense layer, False otherwise.
+        """
         if node.class_name == 'Dense':
             return True
         return False
 
     def transform(self, model: ModelGraph, node: Layer) -> Literal[False]:        
+        """If any matched layer is followed by ReLU, apply the activation function during the 
+        MatVec itself by merging the layers.
 
+        Args:
+            model (ModelGraph): contains the neural network information.
+            node (Layer): the matched layer.
+        Returns:
+            bool: False because we do not change the network architecture.
+        """
         layers: list[Layer] = list(model.get_layers())
         for i, layer in enumerate(layers[:-1]):
             next_layer = layers[i + 1]

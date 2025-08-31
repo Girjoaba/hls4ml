@@ -1,6 +1,6 @@
 # Typing imports
 from __future__ import annotations # makes all annotations into strings
-from typing import List, Literal, Any, Optional, Callable, TYPE_CHECKING
+from typing import Literal, Optional, Callable, TYPE_CHECKING
 from numpy.typing import NDArray
 if TYPE_CHECKING:
     from hls4ml.model.graph import ModelGraph
@@ -25,7 +25,7 @@ class DynamaticAttrBuilder:
         write_dims (bool):    the layer dimensions should be explicitly written in the project file
         write_func (bool):    the layer has a corresponding function call that should be explicitly written
                               as part of the NN architecture in the project file
-        func_call (str):      the corresponding layer DSLX function call 
+        func_call (str):      the corresponding layer C function call 
 
         in_dim_key, out_dim_key (str): the variable name containing the layer dimensions (that goes in and out the layer)
         in_dim_val, out_dim_val (int): the value of each layer dimension (that goes in and out the layer)
@@ -33,12 +33,14 @@ class DynamaticAttrBuilder:
         fxp_weights (np.ndarray): already quantized weight matrix
         fxp_bias (np.ndarray):    already quantized bias vector
 
-        in_width, in_en, in_frac (str): parameters used for fixed point computation in DSLX
-                                   the parameters of the input vector 
-                                   number of bits (width), is negative, binary unsigned exponent (frac bits)
-        out_width, out_en, out_frac (str): parameters used for fixed point computation in DSLX
-                                      the parameters of the output vector 
-                                      number of bits (width), is negative, binary unsigned exponent (frac bits)
+        in_width, in_frac (str): parameters used for fixed point computation
+                                 the parameters of the input vector 
+                                 bit width, fraction
+        out_width, out_frac (str): parameters used for fixed point computation
+                                   the parameters of the output vector 
+                                   bit width, fraction
+
+        in_type, out_type (str): the associated inferred types in the C frontend code
 
     Args:
         node (Layer): A layer of the model graph
@@ -171,6 +173,7 @@ class DynamaticAttrBuilder:
         elif self.node.class_name == 'Softmax':
             implementation = dict(self.node.attributes).get('implementation', 'stable')
             if implementation == 'stable':
+                #TODO: implement an approximation with look-up tables for softmax
                 func_call_str = f'ARGMAX'
             elif implementation == 'latency':
                 table_size = dict(self.node.attributes)['table_size']
