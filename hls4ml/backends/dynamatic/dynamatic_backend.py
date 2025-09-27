@@ -223,8 +223,6 @@ class DynamaticBackend(FPGABackend):
             predict_cmd = [ 
                 f'bash',
                 f'../predict.sh',
-                f'{path}',
-                f'{kernel_name}.c',
                 f'{kernel_name}'
             ]
             results = []

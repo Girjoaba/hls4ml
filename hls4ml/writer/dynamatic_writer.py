@@ -42,10 +42,6 @@ class DynamaticWriter(Writer):
         dstpath_synth = f'{model.config.get_output_dir()}/synthesize.sh'
         copyfile(srcpath_synth, dstpath_synth)
 
-        srcpath_csim = os.path.join(filedir, '../templates/dynamatic/csim.sh')
-        dstpath_csim = f'{model.config.get_output_dir()}/csim.sh'
-        copyfile(srcpath_csim, dstpath_csim)
-
 
     def write_project_dynamatic(self, model: ModelGraph) -> None:
         """Write the main architecture source file (myproject.c)

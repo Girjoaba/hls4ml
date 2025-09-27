@@ -906,7 +906,7 @@ class ModelGraph(Serializable):
             return output
 
     def predict(self, x):
-        backend: Backend = self.config.backend
+        backend = self.config.backend
         #TODO: add predict to Backend class
         if hasattr(backend, 'predict') and callable(getattr(backend, 'predict')):
             return backend.predict(self, x)
