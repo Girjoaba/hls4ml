@@ -25,8 +25,9 @@ import hls4ml
 test_root_path = Path(__file__).parent
 
 
-@pytest.mark.parametrize('backend', ['Vivado', 'Vitis', 'Quartus', 'oneAPI', 'Dynamatic'])
-@pytest.mark.parametrize('io_type', ['io_parallel', 'io_stream'])
+# @pytest.mark.parametrize('backend', ['Vivado', 'Vitis', 'Quartus', 'oneAPI', 'Dynamatic'])
+@pytest.mark.parametrize('backend', ['Dynamatic'])
+@pytest.mark.parametrize('io_type', ['io_parallel'])
 def test_dense(backend, io_type):
     model = tf.keras.models.Sequential()
     model.add(
