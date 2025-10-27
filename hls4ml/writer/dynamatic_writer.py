@@ -210,16 +210,17 @@ class DynamaticWriter(Writer):
 
         copytree(srcpath, dstpath)
 
-        # ap_types
-        filedir = os.path.dirname(os.path.abspath(__file__))
+        # TODO: future implementation of ap_types separation
+        # # ap_types
+        # filedir = os.path.dirname(os.path.abspath(__file__))
 
-        srcpath = os.path.join(filedir, '../templates/dynamatic/firmware/ap_types/')
-        dstpath = f'{model.config.get_output_dir()}/firmware/ap_types/'
+        # srcpath = os.path.join(filedir, '../templates/dynamatic/firmware/ap_types/')
+        # dstpath = f'{model.config.get_output_dir()}/firmware/ap_types/'
 
-        if os.path.exists(dstpath):
-            rmtree(dstpath)
+        # if os.path.exists(dstpath):
+        #     rmtree(dstpath)
 
-        copytree(srcpath, dstpath)
+        # copytree(srcpath, dstpath)
 
     def write_hls(self, model: ModelGraph) -> None:
         """Main writer function that calls multiple helper functions for writing the infrastrcture
